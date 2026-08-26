@@ -1,0 +1,17 @@
+{
+  "name": "verified-dep-upgrade-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "TrueForge agent: finds vulnerable npm dependencies, upgrades each in isolation, verifies against the repo's own tests, opens a PR with only the verified-safe bumps.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "@types/node": "^22.0.0"
+  }
+}
