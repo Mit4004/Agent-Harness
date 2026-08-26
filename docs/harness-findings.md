@@ -88,3 +88,31 @@ Daytona dashboard (succeeded instantly) and then retrying the TrueForge
 connection once a snapshot already existed — it connected cleanly the second
 time. Worth knowing in case it recurs on a different machine during the
 hackathon: don't burn time regenerating keys before checking the server log.
+
+## 6. Free-tier Gemini quota is far tighter than expected, and at least two limits stack
+
+Running the full agent (not just our own test scripts) against the fixture
+repo for the first time surfaced real numbers, not the ballpark figures we'd
+planned around:
+
+- **`gemini-3.1-pro-preview` has a free-tier limit of `0`** on this account
+  — not low, structurally zero. Don't budget any Pro usage on a fresh free
+  key without checking first.
+- **`gemini-3.6-flash`** hit 429s at two different reported thresholds in
+  the same session — `limit: 5` early on, `limit: 20` a few minutes later.
+  Read that as *at least two overlapping quota windows* (short-burst and
+  something longer), not one simple per-minute cap.
+- After the `limit: 20` wall, three consecutive retries — including one
+  after a 65-second wait — all failed **instantly** with 0 tokens spent.
+  A per-minute limit would have cleared by then. This pattern (instant
+  rejection regardless of wait, after real usage earlier in the session)
+  is what a **daily** quota exhausting mid-afternoon looks like, not a
+  per-minute one recovering.
+
+**Implication for the team:** budget model calls like a genuinely scarce
+resource from the start of a session, not just "avoid bursts." A single
+real agent run (one target repo, 4 dependencies, one Checkpoint A) spent
+enough of the day's Flash allowance to make a second full run impossible
+the same day. Get each teammate their own key (from a separate Google
+account) now rather than discovering this mid-demo-recording — the plan's
+§7 called this out as a mitigation before we knew how sharp the edge was.
