@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Bump, BumpKind } from "./types.js";
@@ -109,8 +110,26 @@ export function parseAudit(json: unknown, installedVersions: Record<string, stri
       diagnosis: null,
       recommendation: null,
       attempts: 0,
+      latestVersion: null,
+      usedOpportunisticFallback: false,
     });
   }
 
   return bumps;
+}
+
+/**
+ * Looks up a package's latest published version from the registry.
+ * Returns null on any failure (offline, unpublished, typo) rather than
+ * throwing — the opportunistic-upgrade check is a bonus, not a
+ * requirement, and its absence should never block the safe audit fix.
+ */
+export function getLatestVersion(pkg: string): string | null {
+  try {
+    const output = execSync(`npm view ${pkg} version`, { encoding: "utf-8", stdio: "pipe" });
+    const version = output.trim();
+    return version || null;
+  } catch {
+    return null;
+  }
 }

@@ -25,6 +25,10 @@ export interface Bump {
   diagnosis: string | null;
   recommendation: string | null;
   attempts: number;
+  /** The package's latest published version, when higher than `target`. */
+  latestVersion: string | null;
+  /** True when latestVersion was attempted first, failed verification, and target was used instead. */
+  usedOpportunisticFallback: boolean;
 }
 
 export interface Baseline {

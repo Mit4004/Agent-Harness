@@ -20,6 +20,11 @@ function truncate(output: string, maxChars = 4000): string {
  * the tier command, and compare failures against the baseline so a
  * pre-existing red test is never blamed on this bump.
  *
+ * Always branches from `baseBranch` explicitly (never "whatever HEAD
+ * happens to be") — required for correctness once a single package can be
+ * verified more than once in the same run, as the opportunistic-upgrade
+ * fallback below does.
+ *
  * `diagnose` is injected (rather than called directly) so this module
  * stays a pure, testable state machine — the model call is the caller's
  * concern, this function only decides green/failed and asks for a
@@ -31,12 +36,46 @@ export function verifyBump(
   baselineFailures: string[],
   tier: VerifyTier,
   diagnose: DiagnoseFn,
+  baseBranch: string,
 ): Bump {
-  execSync(`git checkout -b ${bump.branch}`, { cwd: repoDir, stdio: "pipe" });
+  execSync(`git checkout ${baseBranch}`, { cwd: repoDir, stdio: "pipe" });
+  execSync(`git checkout -B ${bump.branch}`, { cwd: repoDir, stdio: "pipe" });
+  // node_modules is untracked and shared across every branch in repoDir —
+  // without a clean reinstall here, a previous bump's install leaks into
+  // this one (verified the hard way: a bump appeared to pass only because
+  // an earlier bump's install of a different package was still present).
+  execSync(`npm ci`, { cwd: repoDir, stdio: "pipe" });
   execSync(`npm install ${bump.package}@${bump.target}`, { cwd: repoDir, stdio: "pipe" });
 
   const result = runTier(repoDir, tier);
   const attempts = bump.attempts + 1;
+  const verified = classifyResult({ bump, result, tier, baselineFailures, attempts, diagnose });
+
+  // Only a green bump is worth a commit — it's the thing combineGreens
+  // will later cherry-pick. A failed attempt's changes are discarded here
+  // so the working tree is clean before the next bump's checkout; without
+  // this, package.json/package-lock.json edits from a failed attempt
+  // would otherwise be silently carried onto whatever branch comes next.
+  if (verified.result === "green") {
+    execSync(`git add -A`, { cwd: repoDir, stdio: "pipe" });
+    execSync(`git commit -m "Bump ${bump.package} to ${bump.target}"`, { cwd: repoDir, stdio: "pipe" });
+  } else {
+    execSync(`git checkout -- .`, { cwd: repoDir, stdio: "pipe" });
+    execSync(`git clean -fd`, { cwd: repoDir, stdio: "pipe" });
+  }
+
+  return verified;
+}
+
+function classifyResult(args: {
+  bump: Bump;
+  result: { passed: boolean; failures: string[]; output: string };
+  tier: VerifyTier;
+  baselineFailures: string[];
+  attempts: number;
+  diagnose: DiagnoseFn;
+}): Bump {
+  const { bump, result, tier, baselineFailures, attempts, diagnose } = args;
 
   if (tier !== "tests") {
     return {
@@ -48,8 +87,18 @@ export function verifyBump(
     };
   }
 
+  if (result.passed) {
+    return { ...bump, verifyTier: tier, attempts, result: "green", failureExcerpt: null };
+  }
+
+  // The run failed overall. Only call it green if we can specifically
+  // attribute every failure to the pre-existing baseline — never treat
+  // "couldn't identify which tests failed" as "must be fine, then". Name
+  // extraction is best-effort and varies by test runner (TAP, Jest, ...),
+  // so an empty `result.failures` here means "unknown", not "none new".
   const introduced = newTestFailures(baselineFailures, result.failures);
-  if (introduced.length === 0) {
+  const allFailuresArePreexisting = result.failures.length > 0 && introduced.length === 0;
+  if (allFailuresArePreexisting) {
     return { ...bump, verifyTier: tier, attempts, result: "green", failureExcerpt: null };
   }
 
@@ -62,5 +111,54 @@ export function verifyBump(
     failureExcerpt: truncate(result.output),
     diagnosis,
     recommendation,
+  };
+}
+
+/**
+ * Verifies a bump, opportunistically trying the package's latest version
+ * before settling for the audit's minimal safe fix. If latest verifies
+ * green, we take it — free extra currency on top of the required fix. If
+ * it fails, we fall back to the safe target and report why the attempt at
+ * latest didn't pan out, rather than silently only ever offering the
+ * minimum.
+ *
+ * No-ops straight to `verifyBump` when there's no higher version to try,
+ * so callers can use this unconditionally without checking themselves.
+ */
+export function verifyBumpWithOpportunisticUpgrade(
+  repoDir: string,
+  bump: Bump,
+  baselineFailures: string[],
+  tier: VerifyTier,
+  diagnose: DiagnoseFn,
+  baseBranch: string,
+  latestVersion: string | null,
+): Bump {
+  if (!latestVersion || latestVersion === bump.target) {
+    return verifyBump(repoDir, bump, baselineFailures, tier, diagnose, baseBranch);
+  }
+
+  const opportunisticBump: Bump = { ...bump, target: latestVersion, branch: `${bump.branch}-latest` };
+  const opportunisticAttempt = verifyBump(repoDir, opportunisticBump, baselineFailures, tier, diagnose, baseBranch);
+
+  if (opportunisticAttempt.result === "green") {
+    return {
+      ...opportunisticAttempt,
+      branch: bump.branch,
+      latestVersion,
+      usedOpportunisticFallback: false,
+    };
+  }
+
+  const fallbackAttempt = verifyBump(repoDir, bump, baselineFailures, tier, diagnose, baseBranch);
+  const fellBack = fallbackAttempt.result === "green";
+
+  return {
+    ...fallbackAttempt,
+    latestVersion,
+    usedOpportunisticFallback: fellBack,
+    diagnosis: fellBack
+      ? `Tried the latest version (${latestVersion}) first: ${opportunisticAttempt.diagnosis ?? "it failed verification"}. Fell back to the audit-recommended ${bump.target}, which verified clean.`
+      : fallbackAttempt.diagnosis,
   };
 }

@@ -20,6 +20,8 @@ function makeBump(overrides: Partial<Bump>): Bump {
     diagnosis: null,
     recommendation: null,
     attempts: 0,
+    latestVersion: null,
+    usedOpportunisticFallback: false,
     ...overrides,
   };
 }
@@ -66,6 +68,22 @@ describe("renderPrBody", () => {
 
     expect(body).toContain("unverified");
     expect(body).not.toContain("verified: tests pass");
+  });
+
+  it("notes when a bump fell back from a failed opportunistic latest attempt", () => {
+    const plan = makePlan([
+      makeBump({
+        package: "node-fetch",
+        target: "2.7.0",
+        result: "green",
+        latestVersion: "3.3.2",
+        usedOpportunisticFallback: true,
+      }),
+    ]);
+    const body = renderPrBody(plan);
+
+    expect(body).toContain("tried latest `3.3.2` first");
+    expect(body).toContain("fell back to this audit-recommended version");
   });
 
   it("reports zero included bumps honestly instead of an empty section", () => {
