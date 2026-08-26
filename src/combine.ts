@@ -36,8 +36,13 @@ export function combineGreens(
 
   const result = runTier(repoDir, tier);
 
-  if (result.passed) {
-    execSync(`git add -A`, { cwd: repoDir, stdio: "pipe" });
+  // With zero green bumps there's nothing to commit — the combined branch
+  // is identical to base, and `git commit` on no staged changes exits
+  // nonzero and throws. Zero-included is a valid, expected outcome (a bad
+  // run where every bump failed), not an error; only commit when there's
+  // an actual manifest diff to record.
+  if (result.passed && greens.length > 0) {
+    execSync(`git add package.json package-lock.json`, { cwd: repoDir, stdio: "pipe" });
     execSync(`git commit -m "Combine ${greens.length} verified dependency bump(s)"`, { cwd: repoDir, stdio: "pipe" });
   }
 

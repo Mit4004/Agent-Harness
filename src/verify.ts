@@ -15,6 +15,25 @@ function truncate(output: string, maxChars = 4000): string {
   return output.length > maxChars ? output.slice(-maxChars) : output;
 }
 
+/** Numeric-only semver comparison (no prerelease/build metadata handling — sufficient for the plain X.Y.Z versions audit/registry data gives us here). */
+export function isVersionGreater(a: string, b: string): boolean {
+  const partsA = a.split(".").map(Number);
+  const partsB = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+    const diff = (partsA[i] ?? 0) - (partsB[i] ?? 0);
+    if (diff !== 0) return diff > 0;
+  }
+  return false;
+}
+
+/** Only the dependency manifest files belong in a bump commit — never
+ * `git add -A`, which would sweep in anything the test/build run happened
+ * to generate, modify, or delete in the target repo. */
+function commitManifestChanges(repoDir: string, message: string): void {
+  execSync(`git add package.json package-lock.json`, { cwd: repoDir, stdio: "pipe" });
+  execSync(`git commit -m "${message}"`, { cwd: repoDir, stdio: "pipe" });
+}
+
 /**
  * Verifies one bump on its own branch: install the target version, run
  * the tier command, and compare failures against the baseline so a
@@ -51,14 +70,14 @@ export function verifyBump(
   const attempts = bump.attempts + 1;
   const verified = classifyResult({ bump, result, tier, baselineFailures, attempts, diagnose });
 
-  // Only a green bump is worth a commit — it's the thing combineGreens
-  // will later cherry-pick. A failed attempt's changes are discarded here
+  // Only a green bump is worth a commit, and only the manifest files are
+  // part of it — never whatever the test/build run happened to generate
+  // or touch along the way. A failed attempt's changes are discarded here
   // so the working tree is clean before the next bump's checkout; without
   // this, package.json/package-lock.json edits from a failed attempt
   // would otherwise be silently carried onto whatever branch comes next.
   if (verified.result === "green") {
-    execSync(`git add -A`, { cwd: repoDir, stdio: "pipe" });
-    execSync(`git commit -m "Bump ${bump.package} to ${bump.target}"`, { cwd: repoDir, stdio: "pipe" });
+    commitManifestChanges(repoDir, `Bump ${bump.package} to ${bump.target}`);
   } else {
     execSync(`git checkout -- .`, { cwd: repoDir, stdio: "pipe" });
     execSync(`git clean -fd`, { cwd: repoDir, stdio: "pipe" });
@@ -134,7 +153,11 @@ export function verifyBumpWithOpportunisticUpgrade(
   baseBranch: string,
   latestVersion: string | null,
 ): Bump {
-  if (!latestVersion || latestVersion === bump.target) {
+  // "Opportunistic" only makes sense as an upgrade beyond the audit's
+  // required fix — a "latest" dist-tag that happens to be at or below
+  // `target` must never be substituted in, even if it verifies green,
+  // or a still-vulnerable version could silently replace the safe one.
+  if (!latestVersion || !isVersionGreater(latestVersion, bump.target)) {
     return verifyBump(repoDir, bump, baselineFailures, tier, diagnose, baseBranch);
   }
 
@@ -142,15 +165,26 @@ export function verifyBumpWithOpportunisticUpgrade(
   const opportunisticAttempt = verifyBump(repoDir, opportunisticBump, baselineFailures, tier, diagnose, baseBranch);
 
   if (opportunisticAttempt.result === "green") {
+    // Keep the branch name pointing at where the commit actually landed
+    // (`${bump.branch}-latest`) — overwriting it back to `bump.branch`
+    // would point callers at a branch that was never created here.
     return {
       ...opportunisticAttempt,
-      branch: bump.branch,
       latestVersion,
       usedOpportunisticFallback: false,
     };
   }
 
-  const fallbackAttempt = verifyBump(repoDir, bump, baselineFailures, tier, diagnose, baseBranch);
+  // Carry the failed attempt's count forward so the final result reflects
+  // both tries, not just the fallback's own single attempt.
+  const fallbackAttempt = verifyBump(
+    repoDir,
+    { ...bump, attempts: opportunisticAttempt.attempts },
+    baselineFailures,
+    tier,
+    diagnose,
+    baseBranch,
+  );
   const fellBack = fallbackAttempt.result === "green";
 
   return {
