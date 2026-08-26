@@ -24,9 +24,11 @@ See [docs/harness-findings.md](docs/harness-findings.md) for what we learned run
 ```
 src/            audit parsing, baseline detection, per-bump verification, PR report rendering
 test/           unit tests for the pure functions above (this is what Qodo reviews)
-agent/          SKILL.md playbook + prompt templates the harness loads
-docs/           architecture notes, empirical harness findings, demo script
+docs/           empirical harness findings (architecture notes and demo script to follow)
+agent/          (planned) SKILL.md playbook + prompt templates the harness loads
 ```
+
+`agent/` doesn't exist yet — it's next on the build plan, not yet part of this repo. Everything else above is already there.
 
 ## Setup
 
