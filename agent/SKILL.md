@@ -17,30 +17,37 @@ running installs and tests, comparing results against a baseline. **Your
 job is judgment**: deciding what to attempt, reading raw failure output and
 explaining it in plain English, and knowing when to stop and ask.
 
-## Step 0 — One-time sandbox setup
+**Every model call is a scarce, rate-limited resource — batch aggressively.**
+Free-tier quota is tight enough that a chain of small, separate shell
+commands (check Node, then install it, then clone, then build, then clone
+again...) can burn your whole per-minute budget before the actual work
+starts. Wherever a step below shows multiple commands, write them as ONE
+shell script and run it as a single tool call — never split a step you
+could do in one call into several just because it reads more naturally
+that way. Only stop and make a fresh call when you genuinely need to see
+a result before deciding what to do next (a checkpoint, or a bump's
+pass/fail outcome).
 
-Do this once per session, before touching the target repo:
+## Step 0+1 — Sandbox setup and clone, in one call
+
+Combine all of this into a single shell script and run it as one tool call
+— there is no reason to check Node's version, install it, clone the
+engine, build it, and clone the target repo as five separate turns:
 
 ```bash
 node -v || (curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs)
 git clone --depth 1 https://github.com/Mit4004/Agent-Harness.git /tmp/engine
 cd /tmp/engine && npm install && npm run build
+git clone --depth 1 -b <branch> https://github.com/<owner>/<repo>.git /tmp/target
 ```
 
 The default sandbox image has no Node.js preinstalled — do not skip the
 version check. `/tmp/engine/dist/cli.js` is the CLI you'll invoke below.
+Ask the user for the repo URL and branch first if they weren't already
+given, then run this whole block in one go.
 
-## Step 1 — Intake and clone
-
-Ask the user for a repo URL and branch if not already given. Clone it
-read-only, depth 1:
-
-```bash
-git clone --depth 1 -b <branch> https://github.com/<owner>/<repo>.git /tmp/target
-```
-
-Do not put a GitHub token in this clone command for a public repo. If the
-repo is private, use the short-lived, read-only credential the harness
+Do not put a GitHub token in the target-repo clone for a public repo. If
+the repo is private, use the short-lived, read-only credential the harness
 provides for sandbox operations — never a long-lived personal token, and
 never a token with write access (writes happen later, through the GitHub
 connector, not from inside the sandbox).
@@ -72,19 +79,27 @@ Ask which bumps to approve — all, some, or none. Do not proceed to Step 4
 for any bump the user didn't approve. Mark unapproved bumps `"skipped"`
 in the plan.
 
-## Step 4 — Verify each approved bump (in parallel)
+## Step 4 — Verify each approved bump
 
-For each approved bump, dispatch a **subagent** (up to 3 concurrent) whose
-only job is:
+For each approved bump, dispatch a **subagent** whose only job is: write
+the bump object and the baseline's `failingTests` array to temp JSON files,
+run
 
 ```bash
 node /tmp/engine/dist/cli.js verify-one /tmp/target <baseBranch> <bump.json> <baselineFailures.json> <baseline.tier>
 ```
 
-Write the bump object and the baseline's `failingTests` array to temp JSON
-files first; the subagent reads them and returns the verified bump object
-(with `result`, `failureExcerpt`, `attempts`, etc. filled in) as its only
-output — no intermediate shell noise needs to reach your context.
+and reply with **only** the raw JSON result — no extra commentary, no
+re-explaining what it did. Every model call a subagent makes competes for
+the same rate-limited budget as everything else in this session, so a
+one-line "here's the result: {...}" reply is strictly better than a
+paragraph.
+
+Keep concurrency modest (2–3 at once, not more) — parallel subagents share
+one request-per-minute budget with the root agent, so more concurrency
+doesn't finish faster, it just means more of the run spent waiting out
+429s. If you hit a rate-limit error, back off and retry rather than
+treating it as a real failure — it isn't one.
 
 This step tries the package's `latestVersion` before settling for the
 audit's `target`, automatically falling back to `target` if latest fails.
