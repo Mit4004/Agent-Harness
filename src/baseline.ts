@@ -62,15 +62,22 @@ export function runTier(repoDir: string, tier: VerifyTier): TierRunResult {
 }
 
 /**
- * Best-effort extraction of failing test identifiers from common
- * runner output (jest/vitest/mocha "✗"/"FAIL" style lines). Used only
- * to diff baseline failures against post-bump failures — never the
- * sole basis for a pass/fail verdict.
+ * Best-effort extraction of failing test identifiers from common runner
+ * output: jest/vitest/mocha "✗"/"FAIL" style lines, and TAP "not ok N -
+ * description" lines (Node's built-in test runner, `node --test`). Used
+ * only to diff baseline failures against post-bump failures — an empty
+ * result here means "couldn't identify them", not "there aren't any", so
+ * callers must never treat it as proof of a clean run on its own.
  */
 function extractFailingTestNames(output: string): string[] {
   const lines = output.split("\n");
   const failing: string[] = [];
   for (const line of lines) {
+    const tapMatch = line.match(/^not ok \d+ (?:-\s*)?(.+)$/);
+    if (tapMatch) {
+      failing.push(tapMatch[1].trim());
+      continue;
+    }
     const match = line.match(/^\s*(?:✗|✕|FAIL|×)\s+(.+)$/);
     if (match) failing.push(match[1].trim());
   }

@@ -3,10 +3,19 @@ import type { BumpPlan, VerifyTier } from "./types.js";
 import { runTier } from "./baseline.js";
 
 /**
- * Cherry-picks every green bump onto one combined branch and re-runs the
- * tier command once more. Individually-green bumps can still conflict
- * with each other (shared transitive deps, lockfile churn) — this is the
- * step that catches that before anything reaches a PR.
+ * Applies every green bump's target version together on one fresh branch
+ * off base, in a single `npm install`, and re-runs the tier command once
+ * more. Individually-green bumps can still conflict with each other
+ * (shared transitive deps) — this is the step that catches that before
+ * anything reaches a PR.
+ *
+ * Deliberately does NOT cherry-pick each bump's individual commit: two
+ * bumps verified in isolation each regenerate package-lock.json from the
+ * same base, and git cherry-picking both onto one branch reliably produces
+ * a real merge conflict in the lockfile (confirmed empirically, not a
+ * hypothetical) even when the actual dependency versions don't conflict
+ * at all. Letting npm compute one coherent lockfile for the combination
+ * in a single pass sidesteps that entirely.
  */
 export function combineGreens(
   repoDir: string,
@@ -16,12 +25,26 @@ export function combineGreens(
   const combinedBranch = `fix/deps-${plan.runId}`;
   const greens = plan.bumps.filter((b) => b.result === "green");
 
-  execSync(`git checkout -b ${combinedBranch} ${plan.baseBranch}`, { cwd: repoDir, stdio: "pipe" });
+  execSync(`git checkout ${plan.baseBranch}`, { cwd: repoDir, stdio: "pipe" });
+  execSync(`git checkout -B ${combinedBranch}`, { cwd: repoDir, stdio: "pipe" });
+  execSync(`npm ci`, { cwd: repoDir, stdio: "pipe" });
 
-  for (const bump of greens) {
-    execSync(`git cherry-pick ${bump.branch}`, { cwd: repoDir, stdio: "pipe" });
+  if (greens.length > 0) {
+    const targets = greens.map((b) => `${b.package}@${b.target}`).join(" ");
+    execSync(`npm install ${targets}`, { cwd: repoDir, stdio: "pipe" });
   }
 
   const result = runTier(repoDir, tier);
+
+  // With zero green bumps there's nothing to commit — the combined branch
+  // is identical to base, and `git commit` on no staged changes exits
+  // nonzero and throws. Zero-included is a valid, expected outcome (a bad
+  // run where every bump failed), not an error; only commit when there's
+  // an actual manifest diff to record.
+  if (result.passed && greens.length > 0) {
+    execSync(`git add package.json package-lock.json`, { cwd: repoDir, stdio: "pipe" });
+    execSync(`git commit -m "Combine ${greens.length} verified dependency bump(s)"`, { cwd: repoDir, stdio: "pipe" });
+  }
+
   return { passed: result.passed, output: result.output, combinedBranch };
 }

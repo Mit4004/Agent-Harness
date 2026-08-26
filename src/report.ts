@@ -9,7 +9,14 @@ const TIER_LABEL: Record<Bump["verifyTier"], string> = {
 
 function renderBumpLine(bump: Bump): string {
   const label = TIER_LABEL[bump.verifyTier];
-  return `- **${bump.package}** \`${bump.current}\` → \`${bump.target}\` (${bump.severity}, ${bump.advisory}) — _${label}_`;
+  const line = `- **${bump.package}** \`${bump.current}\` → \`${bump.target}\` (${bump.severity}, ${bump.advisory}) — _${label}_`;
+  if (bump.usedOpportunisticFallback && bump.latestVersion) {
+    return `${line}\n  (tried latest \`${bump.latestVersion}\` first — it failed verification, fell back to this audit-recommended version)`;
+  }
+  if (bump.latestVersion && bump.target === bump.latestVersion) {
+    return `${line}\n  (this is also the latest published version — verified clean, not just the minimal fix)`;
+  }
+  return line;
 }
 
 function renderFailedLine(bump: Bump): string {
