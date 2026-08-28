@@ -1,6 +1,10 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import type { BumpPlan, VerifyTier } from "./types.js";
 import { runTier } from "./baseline.js";
+
+function run(repoDir: string, command: string, args: string[]): void {
+  execFileSync(command, args, { cwd: repoDir, stdio: "pipe" });
+}
 
 /**
  * Applies every green bump's target version together on one fresh branch
@@ -25,13 +29,13 @@ export function combineGreens(
   const combinedBranch = `fix/deps-${plan.runId}`;
   const greens = plan.bumps.filter((b) => b.result === "green");
 
-  execSync(`git checkout ${plan.baseBranch}`, { cwd: repoDir, stdio: "pipe" });
-  execSync(`git checkout -B ${combinedBranch}`, { cwd: repoDir, stdio: "pipe" });
-  execSync(`npm ci`, { cwd: repoDir, stdio: "pipe" });
+  run(repoDir, "git", ["checkout", plan.baseBranch]);
+  run(repoDir, "git", ["checkout", "-B", combinedBranch]);
+  run(repoDir, "npm", ["ci"]);
 
   if (greens.length > 0) {
-    const targets = greens.map((b) => `${b.package}@${b.target}`).join(" ");
-    execSync(`npm install ${targets}`, { cwd: repoDir, stdio: "pipe" });
+    const targets = greens.map((b) => `${b.package}@${b.target}`);
+    run(repoDir, "npm", ["install", ...targets]);
   }
 
   const result = runTier(repoDir, tier);
@@ -42,8 +46,8 @@ export function combineGreens(
   // run where every bump failed), not an error; only commit when there's
   // an actual manifest diff to record.
   if (result.passed && greens.length > 0) {
-    execSync(`git add package.json package-lock.json`, { cwd: repoDir, stdio: "pipe" });
-    execSync(`git commit -m "Combine ${greens.length} verified dependency bump(s)"`, { cwd: repoDir, stdio: "pipe" });
+    run(repoDir, "git", ["add", "package.json", "package-lock.json"]);
+    run(repoDir, "git", ["commit", "-m", `Combine ${greens.length} verified dependency bump(s)`]);
   }
 
   return { passed: result.passed, output: result.output, combinedBranch };

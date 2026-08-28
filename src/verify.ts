@@ -1,6 +1,10 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import type { Bump, VerifyTier } from "./types.js";
 import { runTier } from "./baseline.js";
+
+function run(repoDir: string, command: string, args: string[]): void {
+  execFileSync(command, args, { cwd: repoDir, stdio: "pipe" });
+}
 
 export interface DiagnoseFn {
   (args: { bump: Bump; output: string }): { diagnosis: string; recommendation: string };
@@ -30,8 +34,8 @@ export function isVersionGreater(a: string, b: string): boolean {
  * `git add -A`, which would sweep in anything the test/build run happened
  * to generate, modify, or delete in the target repo. */
 function commitManifestChanges(repoDir: string, message: string): void {
-  execSync(`git add package.json package-lock.json`, { cwd: repoDir, stdio: "pipe" });
-  execSync(`git commit -m "${message}"`, { cwd: repoDir, stdio: "pipe" });
+  run(repoDir, "git", ["add", "package.json", "package-lock.json"]);
+  run(repoDir, "git", ["commit", "-m", message]);
 }
 
 /**
@@ -57,14 +61,14 @@ export function verifyBump(
   diagnose: DiagnoseFn,
   baseBranch: string,
 ): Bump {
-  execSync(`git checkout ${baseBranch}`, { cwd: repoDir, stdio: "pipe" });
-  execSync(`git checkout -B ${bump.branch}`, { cwd: repoDir, stdio: "pipe" });
+  run(repoDir, "git", ["checkout", baseBranch]);
+  run(repoDir, "git", ["checkout", "-B", bump.branch]);
   // node_modules is untracked and shared across every branch in repoDir —
   // without a clean reinstall here, a previous bump's install leaks into
   // this one (verified the hard way: a bump appeared to pass only because
   // an earlier bump's install of a different package was still present).
-  execSync(`npm ci`, { cwd: repoDir, stdio: "pipe" });
-  execSync(`npm install ${bump.package}@${bump.target}`, { cwd: repoDir, stdio: "pipe" });
+  run(repoDir, "npm", ["ci"]);
+  run(repoDir, "npm", ["install", `${bump.package}@${bump.target}`]);
 
   const result = runTier(repoDir, tier);
   const attempts = bump.attempts + 1;
@@ -79,8 +83,8 @@ export function verifyBump(
   if (verified.result === "green") {
     commitManifestChanges(repoDir, `Bump ${bump.package} to ${bump.target}`);
   } else {
-    execSync(`git checkout -- .`, { cwd: repoDir, stdio: "pipe" });
-    execSync(`git clean -fd`, { cwd: repoDir, stdio: "pipe" });
+    run(repoDir, "git", ["checkout", "--", "."]);
+    run(repoDir, "git", ["clean", "-fd"]);
   }
 
   return verified;
