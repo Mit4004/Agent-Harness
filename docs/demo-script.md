@@ -41,7 +41,22 @@ and a second key from the same Google account shares the same pool. Switch model
 before switching key. Fallback order: `gemini-3.5-flash` → `gemini-3.5-flash-lite`
 → `gemini-3.1-flash-lite`.
 
-**3. Record in the morning, on fresh daily quota.** Dry run first, then record.
+**3. Dry run and record on different quota pools — never the same one.** A
+single full run (one repo, four dependencies, one Checkpoint A) spends enough of
+a model's daily allowance to make a second full run impossible that day, so
+"rehearse then record" on one model is self-defeating. Because free-tier quota
+is counted **per model**, the cheapest fix is to rehearse on a different model
+than you record on:
+
+| | Model |
+|---|---|
+| Dry run | `gemini-3.5-flash-lite` |
+| Recording | `gemini-3.5-flash` (untouched that day) |
+
+A key from a genuinely different Google account works too — a second key from
+the *same* account does not, it shares the pool. Rehearsing the previous day is
+the safest option of all. Record in the morning either way, so a failed take
+leaves room for another.
 
 **4. Reset the fixture.** `demo-vulnerable-app` `main` must still be vulnerable —
 `npm audit` should exit non-zero with four advisories. Do **not** merge PR #1
@@ -57,7 +72,7 @@ ten seconds in the run. Know where it appears on screen before you record.
 | Time | Shot | What to say |
 |---|---|---|
 | **0:00–0:20** | The problem. A repo with a pile of Dependabot PRs. | "Dependabot opened twelve PRs. Which of these are safe to merge? Nobody knows without running them — so they sit there." |
-| **0:20–0:35** | Paste the repo URL into TrueForge. Sandbox starts. | "The agent works in a sandbox. It gets a read-only clone credential and nothing else — it has no way to write to GitHub at all." |
+| **0:20–0:35** | Paste the repo URL into TrueForge. Sandbox starts. | "The agent works in a sandbox. This repo is public, so it gets **no GitHub credential at all** — there is nothing to hand it. On a private repo it would get a short-lived, read-only clone token. Either way it has no way to write to GitHub." |
 | **0:35–0:55** | Clone, `npm ci`, baseline test run. | "First it establishes a baseline, so we know what was already broken before it touched anything. Four dependencies, tests currently green." |
 | **0:55–1:15** | Audit → plan → **Checkpoint A**. | "Four real advisories. It's proposing patch bumps for three and flagging node-fetch as the awkward one. Nothing has been changed yet — this is a scope gate, and I have to approve it." |
 | **1:15–1:50** | Subagents verify in parallel, one branch per bump. | "Each bump gets its own branch and its own test run. Not 'do these versions exist' — does *this repo's* suite still pass with this exact change." |
@@ -73,11 +88,12 @@ ten seconds in the run. Know where it appears on screen before you record.
 At **0:20** you claim the sandbox cannot write to GitHub. That is true and it is
 worth being specific about, because it is also why a human does the final push:
 
-> "The sandbox has no write credential — by design. The push and the PR are
-> meant to go through the harness's MCP gateway, outside the sandbox, behind one
-> more approval. That connector isn't wired yet, so right now I take the approved
-> patch and open the PR myself. The boundary is real either way: the agent
-> genuinely cannot reach GitHub."
+> "The sandbox has no write credential — by design, and for this public repo no
+> GitHub credential at all. The push and the PR are meant to go through the
+> harness's MCP gateway, outside the sandbox, behind one more approval. That
+> connector isn't wired yet, so right now I take the approved patch and open the
+> PR myself. The boundary is real either way: the agent genuinely cannot reach
+> GitHub."
 
 Volunteering the gap reads as engineering judgment. Being caught on it in Q&A
 does not.
