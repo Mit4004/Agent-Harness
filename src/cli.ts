@@ -12,7 +12,7 @@ import { runBaseline } from "./baseline.js";
 import { verifyBumpWithOpportunisticUpgrade, type DiagnoseFn } from "./verify.js";
 import { combineGreens } from "./combine.js";
 import { renderPrBody } from "./report.js";
-import type { Bump, BumpPlan } from "./types.js";
+import type { Bump, BumpPlan, VerifyTier } from "./types.js";
 
 function readJson<T>(path: string): T {
   return JSON.parse(readFileSync(path, "utf-8")) as T;
@@ -20,6 +20,27 @@ function readJson<T>(path: string): T {
 
 function printJson(value: unknown): void {
   process.stdout.write(JSON.stringify(value, null, 2) + "\n");
+}
+
+const VERIFY_TIERS = ["tests", "build", "resolves", "none"] as const;
+
+/**
+ * Validates a tier string coming off the command line instead of casting it.
+ * A bare `as VerifyTier` was actively dangerous here: runTier used to treat any
+ * unrecognised tier as the build tier, while the green/failed classification
+ * treated it as a non-test tier — so a near-miss like "test" (singular) would
+ * verify a bump by *building* it and still report it green, under a plan that
+ * claims test-backed evidence. Overstating the evidence is the one thing this
+ * tool must never do, so an unknown tier is a hard error, not a fallback.
+ */
+function parseTier(raw: string): VerifyTier {
+  if ((VERIFY_TIERS as readonly string[]).includes(raw)) {
+    return raw as VerifyTier;
+  }
+  process.stderr.write(
+    `Invalid tier ${JSON.stringify(raw)}. Expected one of: ${VERIFY_TIERS.join(", ")}.\n`,
+  );
+  process.exit(1);
 }
 
 /**
@@ -69,7 +90,7 @@ function cmdVerifyOne(repoDir: string, baseBranch: string, bumpFile: string, bas
     repoDir,
     bump,
     baselineFailures,
-    tier as BumpPlan["baseline"]["tier"],
+    parseTier(tier),
     stubDiagnose,
     baseBranch,
     bump.latestVersion,

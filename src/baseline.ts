@@ -41,6 +41,16 @@ function run(cmd: string, repoDir: string): { ok: boolean; output: string } {
  * pass/fail (e.g. build/resolves tiers) can ignore it.
  */
 export function runTier(repoDir: string, tier: VerifyTier): TierRunResult {
+  // Validated up front, before any install work. Previously an unrecognised
+  // tier fell through a `tests ? "npm test" : "npm run build"` ternary, so it
+  // silently ran the *build* command and returned that as the tier's result —
+  // the exact path by which a bump could be reported green on weaker evidence
+  // than the plan claimed. Fail loudly instead, and fail before spending an
+  // `npm ci` on a run that cannot produce a meaningful verdict.
+  if (!["tests", "build", "resolves", "none"].includes(tier)) {
+    throw new Error(`Unsupported verification tier: ${String(tier)}`);
+  }
+
   if (tier === "none") {
     return { passed: false, failures: [], output: "" };
   }
