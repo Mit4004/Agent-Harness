@@ -17,7 +17,7 @@ See [docs/harness-findings.md](docs/harness-findings.md) for what we learned run
 - **Sandbox-as-tool** — clone, install, and test runs happen in a Daytona-backed sandbox, provisioned per session, not on the harness server itself.
 - **Human checkpoints** — the agent pauses twice: once to approve the upgrade plan before touching anything, once to approve the final PR (fixed / excluded / skipped buckets) before any write to GitHub.
 - **Subagents** — each candidate bump is verified on its own branch, in parallel, with its own clean context; only the pass/fail verdict returns to the root agent.
-- **Credential boundary** — the sandbox is provisioned with **no GitHub credentials at all**, which is deliberate: the only irreversible action in a run (branch push + PR creation) is designed to happen outside it, through the GitHub MCP connector, behind the harness's own approval gate.
+- **Credential boundary** — **no write credential ever enters the sandbox.** A public-repo run carries no GitHub credential at all; a private-repo run gets a short-lived, read-only one from the harness purely to clone. The only irreversible action in a run (branch push + PR creation) is designed to happen outside the sandbox, through the GitHub MCP connector, behind the harness's own approval gate.
 
 > **Status, stated plainly:** that last point is the one piece not yet wired end to end. The sandbox boundary is real and enforced — the agent genuinely cannot reach GitHub — but the MCP connector is not connected yet, so a completed run currently ends with an approved patch and PR body that a human pushes from outside the sandbox. Everything upstream of that (audit, plan, per-bump verification, both checkpoints, combine) runs unaided. We would rather document the gap than describe the finished design as if it were shipped.
 
@@ -27,12 +27,17 @@ See [docs/harness-findings.md](docs/harness-findings.md) for what we learned run
 
 | Tier | Condition | What a green bump means |
 |---|---|---|
-| `tests` | the repo has a working test suite | strongest claim: the repo's own tests pass with this bump |
-| `build` | no usable tests, but `npm run build` succeeds | build-verified only — *not* "safe" |
-| `resolves` | neither, but `npm ci` resolves cleanly | installs cleanly; **no** behavioural evidence |
-| `none` | the baseline is already broken | the agent reports this and stops |
+| `tests` | the repo has a working test suite | strongest claim: **no new test failures** against the baseline |
+| `build` | no usable tests, but a build command exists | build-verified only — *not* "safe" |
+| `resolves` | neither; `npm ci` is all that runs | installs cleanly; **no** behavioural evidence |
+| `none` | no `package.json`, or a test run that failed without naming any test | the agent reports this and stops |
 
-Every bump in the PR body carries its tier, and a baseline run records which tests were *already* failing, so only genuinely new failures are attributed to a bump. A `resolves`-tier bump is never described as safe. Guarding that distinction is why an unvalidated tier string was treated as a serious bug (see the Qodo section).
+Two details worth stating precisely, because the difference is exactly the kind of thing this tool must not blur:
+
+- **Green means "no new failures", not "everything passes."** The baseline run records which tests were already red, and a bump stays green if every failure it produces was already failing before. If the suite fails in a way the runner's output can't be attributed to named tests, that counts as *unknown*, never as *fine*.
+- **A failed baseline does not always stop the run.** Only a missing `package.json`, or a test run that fails without naming any test, produces tier `none`. A repo whose build or install is already broken still gets planned at the `build` or `resolves` tier — with correspondingly weaker labels on every bump.
+
+Included bumps carry their tier label in the PR body. Excluded and skipped bumps are listed with the diagnosis instead, so read the `Baseline:` line at the top of the PR body for the tier the whole run was verified at. A `resolves`-tier bump is never described as safe. Guarding that distinction is why an unvalidated tier string was treated as a serious bug (see the Qodo section).
 
 **Opportunistic upgrades.** For each advisory the agent first tries the package's *latest* published version, not just the minimum version that clears the CVE, and falls back to the audit-recommended target if latest fails verification. You get the best version that actually passes, with `usedOpportunisticFallback` recording which one it settled on.
 
@@ -77,6 +82,8 @@ What Qodo has caught across the repo, and what we did about it:
 | [#3](https://github.com/Mit4004/Agent-Harness/pull/3) | Four bugs, two of them **Security**: bump and branch fields were interpolated into shell command strings | Two security findings fixed in [#4](https://github.com/Mit4004/Agent-Harness/pull/4) (every call moved to `execFileSync` argument arrays); the remaining two fixed in [#5](https://github.com/Mit4004/Agent-Harness/pull/5) |
 | [#4](https://github.com/Mit4004/Agent-Harness/pull/4) | None — *"no material issues"* | — |
 | [#5](https://github.com/Mit4004/Agent-Harness/pull/5) | *Invalid tier yields false green* and *Audit tempfile races plans*, both carried over from #3 | Fixed, with regression tests |
+
+> **Merge state, so the table isn't read as stronger than it is:** #4, #5 and this PR are open at the time of writing. Until #4 and #5 land, `main` still carries the interpolated `execSync` calls in `verify.ts` / `combine.ts`, still casts the CLI tier argument without validating it, and still writes the audit report to a shared tempfile. The rows above describe what each PR does, not what `main` contains today. Qodo's review of this README caught precisely that gap, which is a fair hit — merge #4 and #5 before #6.
 
 **One process gap, disclosed rather than papered over.** PR #3 was merged while four Qodo findings were still open. #4 was opened as a follow-up and fixed the two security ones, but it did not touch `src/cli.ts`, so the other two survived on `main` until a later audit of the review history caught them — which is what #5 fixes. Two commits also reached `main` outside a PR: the initial scaffold, before the review process was set up, and a one-line docs commit.
 
