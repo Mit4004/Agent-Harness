@@ -7,7 +7,7 @@
 
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { parseAudit, getInstalledVersions, getLatestVersion } from "./audit.js";
+import { parseAudit, getInstalledVersions, getLatestVersion, assertUsableAuditReport } from "./audit.js";
 import { runBaseline } from "./baseline.js";
 import { verifyBumpWithOpportunisticUpgrade, type DiagnoseFn } from "./verify.js";
 import { combineGreens } from "./combine.js";
@@ -106,7 +106,13 @@ function runAudit(repoDir: string): unknown {
       throw error;
     }
   }
-  return JSON.parse(stdout) as unknown;
+
+  // A non-zero exit with output on stdout is not proof the audit succeeded --
+  // npm exits non-zero both for "advisories found" and for operational
+  // failures, and some of those still print JSON. Validate the shape so a
+  // registry or auth failure stops the run instead of being parsed into an
+  // empty, falsely reassuring plan.
+  return assertUsableAuditReport(JSON.parse(stdout) as unknown);
 }
 
 function cmdPlan(repoDir: string): void {

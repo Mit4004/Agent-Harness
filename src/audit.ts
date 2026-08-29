@@ -20,6 +20,45 @@ interface NpmAuditJson {
   >;
 }
 
+/**
+ * Confirms a parsed `npm audit --json` payload is a real audit report before
+ * anything tries to read advisories out of it.
+ *
+ * This exists because npm audit exits non-zero for two very different reasons:
+ * it found advisories (the normal case here) or it failed operationally --
+ * registry unreachable, auth rejected, bad config. Both can still print JSON.
+ * Since `parseAudit` reads `vulnerabilities ?? {}`, an error payload would
+ * otherwise sail through as zero bumps and be reported as a clean plan, which
+ * is precisely the "claim more safety than the evidence supports" failure this
+ * tool exists to prevent. An unusable report must stop the run, not empty it.
+ */
+export function assertUsableAuditReport(report: unknown): NpmAuditJson {
+  if (typeof report !== "object" || report === null) {
+    throw new Error("npm audit did not return a JSON object.");
+  }
+
+  const candidate = report as { error?: unknown; vulnerabilities?: unknown };
+
+  if (candidate.error !== undefined) {
+    const detail =
+      typeof candidate.error === "object" && candidate.error !== null
+        ? JSON.stringify(candidate.error)
+        : String(candidate.error);
+    throw new Error(`npm audit reported an error instead of a report: ${detail}`);
+  }
+
+  if (
+    typeof candidate.vulnerabilities !== "object" ||
+    candidate.vulnerabilities === null
+  ) {
+    throw new Error(
+      "npm audit output has no 'vulnerabilities' map -- treating this as a failed audit rather than as zero vulnerabilities.",
+    );
+  }
+
+  return report as NpmAuditJson;
+}
+
 const SEVERITY_MAP: Record<NpmAuditAdvisory["severity"], Bump["severity"]> = {
   critical: "Critical",
   high: "High",

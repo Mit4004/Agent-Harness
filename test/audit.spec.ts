@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseAudit } from "../src/audit.js";
+import { parseAudit, assertUsableAuditReport } from "../src/audit.js";
 
 describe("parseAudit", () => {
   it("turns a fixable advisory into a candidate bump", () => {
@@ -70,5 +70,34 @@ describe("parseAudit", () => {
 
   it("returns an empty list for a clean audit", () => {
     expect(parseAudit({ vulnerabilities: {} }, {})).toEqual([]);
+  });
+});
+
+describe("assertUsableAuditReport", () => {
+  // Qodo flagged this on PR #5: npm audit exits non-zero both when it finds
+  // advisories (normal here) and when it fails operationally, and some
+  // failures still print JSON. Because parseAudit reads `vulnerabilities ?? {}`,
+  // an error payload would otherwise be reported as a clean, zero-bump plan --
+  // claiming more safety than the run actually established.
+  it("rejects an npm error payload instead of treating it as zero vulnerabilities", () => {
+    expect(() =>
+      assertUsableAuditReport({ error: { code: "ENEEDAUTH", summary: "auth required" } }),
+    ).toThrow(/reported an error/);
+  });
+
+  it("rejects a payload with no vulnerabilities map", () => {
+    expect(() => assertUsableAuditReport({ metadata: {} })).toThrow(
+      /no 'vulnerabilities' map/,
+    );
+  });
+
+  it("rejects non-object output", () => {
+    expect(() => assertUsableAuditReport("not json")).toThrow(/did not return a JSON object/);
+    expect(() => assertUsableAuditReport(null)).toThrow(/did not return a JSON object/);
+  });
+
+  it("accepts a genuine report, including one with zero vulnerabilities", () => {
+    const empty = { vulnerabilities: {} };
+    expect(assertUsableAuditReport(empty)).toBe(empty);
   });
 });
