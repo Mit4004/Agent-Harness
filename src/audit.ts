@@ -1,5 +1,5 @@
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { runNpm } from "./npm.js";
 import { join } from "node:path";
 import type { Bump, BumpKind } from "./types.js";
 
@@ -165,10 +165,20 @@ export function parseAudit(json: unknown, installedVersions: Record<string, stri
  */
 export function getLatestVersion(pkg: string): string | null {
   try {
-    const output = execFileSync("npm", ["view", pkg, "version"], { encoding: "utf-8", stdio: "pipe" });
-    const version = output.trim();
+    const version = runNpm(["view", pkg, "version"]).trim();
     return version || null;
-  } catch {
+  } catch (error) {
+    // Returning null degrades gracefully -- the caller simply skips the
+    // opportunistic attempt and uses the audit's target. But a silent null
+    // makes "no newer version exists" indistinguishable from "the registry
+    // call failed", which is how a broken npm invocation quietly disabled
+    // opportunistic upgrades everywhere without a single error message.
+    // Degrade, but say so.
+    const detail = error instanceof Error ? error.message.split("\n")[0] : String(error);
+    process.stderr.write(
+      `warning: could not look up the latest version of ${pkg} (${detail}). ` +
+        `Continuing with the audit-recommended target and skipping the opportunistic upgrade.` + "\n",
+    );
     return null;
   }
 }
