@@ -8,6 +8,7 @@
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { parseAudit, getInstalledVersions, getLatestVersion, assertUsableAuditReport } from "./audit.js";
+import { runNpm } from "./npm.js";
 import { runBaseline } from "./baseline.js";
 import { verifyBumpWithOpportunisticUpgrade, type DiagnoseFn } from "./verify.js";
 import { combineGreens } from "./combine.js";
@@ -21,20 +22,6 @@ function readJson<T>(path: string): T {
 function printJson(value: unknown): void {
   process.stdout.write(JSON.stringify(value, null, 2) + "\n");
 }
-
-// npm ships as npm.cmd on Windows, which execFileSync cannot resolve via
-// PATHEXT and, since Node 24, refuses to spawn at all without a shell. The
-// agent itself always runs on Linux in the sandbox and takes the plain "npm"
-// path; this branch exists so the pipeline can also be driven locally on
-// Windows for testing.
-//
-// Enabling the shell here is safe *specifically* because runAudit's argv is
-// entirely literal -- the repo path travels via `cwd`, never the command line,
-// so there is nothing to interpolate and nothing to escape. Any call that does
-// splice in a package name, version or branch must keep shell: false and stay
-// on the argument-array form.
-const IS_WINDOWS = process.platform === "win32";
-const NPM = IS_WINDOWS ? "npm.cmd" : "npm";
 
 const VERIFY_TIERS = ["tests", "build", "resolves", "none"] as const;
 
@@ -89,12 +76,10 @@ function currentBranch(repoDir: string): string {
 function runAudit(repoDir: string): unknown {
   let stdout: string;
   try {
-    stdout = execFileSync(NPM, ["audit", "--json"], {
+    stdout = runNpm(["audit", "--json"], {
       cwd: repoDir,
-      encoding: "utf-8",
       stdio: ["ignore", "pipe", "pipe"],
       maxBuffer: 32 * 1024 * 1024,
-      shell: IS_WINDOWS,
     });
   } catch (error) {
     // Expected whenever advisories exist: npm exits non-zero but still writes

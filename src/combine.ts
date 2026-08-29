@@ -1,8 +1,18 @@
 import { execFileSync } from "node:child_process";
+import { runNpm } from "./npm.js";
 import type { BumpPlan, VerifyTier } from "./types.js";
 import { runTier } from "./baseline.js";
 
+/**
+ * Runs one git or npm command in the target repo, always as an argument
+ * array and never through a shell. npm is dispatched via runNpm because
+ * plain execFileSync("npm", ...) does not resolve on Windows -- see npm.ts.
+ */
 function run(repoDir: string, command: string, args: string[]): void {
+  if (command === "npm") {
+    runNpm(args, { cwd: repoDir, stdio: "pipe" });
+    return;
+  }
   execFileSync(command, args, { cwd: repoDir, stdio: "pipe" });
 }
 
