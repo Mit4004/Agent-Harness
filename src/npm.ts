@@ -34,13 +34,25 @@ function resolveNpm(): { file: string; leadingArgs: string[] } {
   );
 }
 
+/**
+ * Options a caller may set. `stdio` and `encoding` are deliberately excluded:
+ * this function's contract is that it returns npm's stdout, so stdout has to
+ * be piped. Allowing an override would let a caller pass stdio: "inherit",
+ * leaving execFileSync with nothing to return and turning the documented
+ * string result into a crash.
+ */
+export type RunNpmOptions = Omit<ExecFileSyncOptions, "stdio" | "encoding">;
+
 /** Runs npm with the given arguments and returns stdout. Never uses a shell. */
-export function runNpm(args: string[], options: ExecFileSyncOptions = {}): string {
+export function runNpm(args: string[], options: RunNpmOptions = {}): string {
   const { file, leadingArgs } = resolveNpm();
   const output = execFileSync(file, [...leadingArgs, ...args], {
-    encoding: "utf-8",
-    stdio: "pipe",
     ...options,
+    // Set last so they cannot be overridden by the spread above.
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "pipe"],
   });
-  return typeof output === "string" ? output : output.toString();
+  // execFileSync can still hand back null/undefined in edge cases; an empty
+  // string keeps the declared return type honest instead of throwing.
+  return output ?? "";
 }

@@ -10,7 +10,7 @@ import { runTier } from "./baseline.js";
  */
 function run(repoDir: string, command: string, args: string[]): void {
   if (command === "npm") {
-    runNpm(args, { cwd: repoDir, stdio: "pipe" });
+    runNpm(args, { cwd: repoDir });
     return;
   }
   execFileSync(command, args, { cwd: repoDir, stdio: "pipe" });

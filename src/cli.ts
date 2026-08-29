@@ -78,7 +78,6 @@ function runAudit(repoDir: string): unknown {
   try {
     stdout = runNpm(["audit", "--json"], {
       cwd: repoDir,
-      stdio: ["ignore", "pipe", "pipe"],
       maxBuffer: 32 * 1024 * 1024,
     });
   } catch (error) {
