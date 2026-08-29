@@ -6,7 +6,7 @@
 // what to write in the PR) — this CLI's job is doing the work correctly.
 
 import { readFileSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { parseAudit, getInstalledVersions, getLatestVersion } from "./audit.js";
 import { runBaseline } from "./baseline.js";
 import { verifyBumpWithOpportunisticUpgrade, type DiagnoseFn } from "./verify.js";
@@ -21,6 +21,20 @@ function readJson<T>(path: string): T {
 function printJson(value: unknown): void {
   process.stdout.write(JSON.stringify(value, null, 2) + "\n");
 }
+
+// npm ships as npm.cmd on Windows, which execFileSync cannot resolve via
+// PATHEXT and, since Node 24, refuses to spawn at all without a shell. The
+// agent itself always runs on Linux in the sandbox and takes the plain "npm"
+// path; this branch exists so the pipeline can also be driven locally on
+// Windows for testing.
+//
+// Enabling the shell here is safe *specifically* because runAudit's argv is
+// entirely literal -- the repo path travels via `cwd`, never the command line,
+// so there is nothing to interpolate and nothing to escape. Any call that does
+// splice in a package name, version or branch must keep shell: false and stay
+// on the argument-array form.
+const IS_WINDOWS = process.platform === "win32";
+const NPM = IS_WINDOWS ? "npm.cmd" : "npm";
 
 const VERIFY_TIERS = ["tests", "build", "resolves", "none"] as const;
 
@@ -59,7 +73,40 @@ const stubDiagnose: DiagnoseFn = ({ bump, output }) => {
 };
 
 function currentBranch(repoDir: string): string {
-  return execSync("git rev-parse --abbrev-ref HEAD", { cwd: repoDir, encoding: "utf-8" }).trim();
+  return execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repoDir, encoding: "utf-8" }).trim();
+}
+
+/**
+ * Runs `npm audit --json` and returns the parsed report.
+ *
+ * Reads stdout directly rather than redirecting to a fixed path. The previous
+ * `> /tmp/.agent-audit.json` was a shared filename, so two runs using the same
+ * sandbox would overwrite and then read each other's audit output -- planning
+ * one repo's bumps from another repo's advisories. Capturing stdout also drops
+ * the `/bin/bash` dependency and the `|| true`, which existed only because npm
+ * audit exits non-zero whenever it finds advisories, i.e. the normal case here.
+ */
+function runAudit(repoDir: string): unknown {
+  let stdout: string;
+  try {
+    stdout = execFileSync(NPM, ["audit", "--json"], {
+      cwd: repoDir,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: 32 * 1024 * 1024,
+      shell: IS_WINDOWS,
+    });
+  } catch (error) {
+    // Expected whenever advisories exist: npm exits non-zero but still writes
+    // the full JSON report to stdout. Only genuinely empty output is fatal --
+    // otherwise a real npm failure would be parsed as "no vulnerabilities".
+    const captured = (error as { stdout?: string | Buffer }).stdout;
+    stdout = captured ? captured.toString() : "";
+    if (!stdout.trim()) {
+      throw error;
+    }
+  }
+  return JSON.parse(stdout) as unknown;
 }
 
 function cmdPlan(repoDir: string): void {
@@ -71,8 +118,7 @@ function cmdPlan(repoDir: string): void {
     return;
   }
 
-  execSync("npm audit --json > /tmp/.agent-audit.json || true", { cwd: repoDir, shell: "/bin/bash" });
-  const auditJson = readJson<unknown>("/tmp/.agent-audit.json");
+  const auditJson = runAudit(repoDir);
   const installedVersions = getInstalledVersions(repoDir);
   const bumps: Bump[] = parseAudit(auditJson, installedVersions).map((bump) => ({
     ...bump,
