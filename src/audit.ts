@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Bump, BumpKind } from "./types.js";
@@ -126,7 +126,7 @@ export function parseAudit(json: unknown, installedVersions: Record<string, stri
  */
 export function getLatestVersion(pkg: string): string | null {
   try {
-    const output = execSync(`npm view ${pkg} version`, { encoding: "utf-8", stdio: "pipe" });
+    const output = execFileSync("npm", ["view", pkg, "version"], { encoding: "utf-8", stdio: "pipe" });
     const version = output.trim();
     return version || null;
   } catch {

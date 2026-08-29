@@ -101,6 +101,15 @@ doesn't finish faster, it just means more of the run spent waiting out
 429s. If you hit a rate-limit error, back off and retry rather than
 treating it as a real failure — it isn't one.
 
+A 429 with `limit: 0` for a specific model means that model has no
+free-tier allowance at all on this account — don't retry it, switch
+models. A 429 that keeps recurring instantly even after a real wait
+(rather than clearing after ~30–60s) is a **daily** quota, not a
+per-minute one — waiting longer won't help, and neither will a second
+API key from the same account, since free-tier quota is pooled per
+Google account, not per key. If this happens mid-run, say so plainly and
+stop rather than silently retrying forever.
+
 This step tries the package's `latestVersion` before settling for the
 audit's `target`, automatically falling back to `target` if latest fails.
 That's real, verified behavior, not a guess — trust `usedOpportunisticFallback`
