@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import type { Finding, ScanReport } from "./types.js";
+import { scrubSecrets } from "./secrets.js";
 
 interface SemgrepFinding {
   check_id?: string;
@@ -38,22 +39,24 @@ export function parseSemgrep(json: unknown): Finding[] {
     severity: mapSeverity(result.extra?.severity),
     file: result.path ?? "unknown",
     line: result.start?.line ?? 0,
-    message: result.extra?.message?.trim() ?? "No message provided by the rule.",
-    // Trimmed and length-capped: a matched line can be long, and the raw
-    // source of a security finding is exactly the kind of thing that should
-    // not balloon a PR body or the model's context.
-    excerpt: (result.extra?.lines ?? "").trim().slice(0, 200),
+    // Both fields are scrubbed, not merely trimmed. A matched source line is
+    // raw code, and a rule message can interpolate the matched value — so a
+    // static-analysis finding on a hardcoded credential would otherwise
+    // republish that credential in the very report meant to warn about it.
+    message: scrubSecrets(result.extra?.message?.trim() ?? "No message provided by the rule."),
+    excerpt: scrubSecrets((result.extra?.lines ?? "").trim().slice(0, 200)),
   }));
 }
 
 /**
  * Runs semgrep over the repo and returns its findings.
  *
- * Reports `unavailable` rather than an empty result when semgrep isn't
- * installed. That distinction matters more than it looks: "we scanned and
- * found nothing" and "we could not scan" are completely different claims to a
- * reader, and collapsing them into an empty list is how a tool ends up
- * implying safety it never established.
+ * Exit codes are read strictly. Without `--error`, semgrep exits 0 whether or
+ * not it finds anything, so a non-zero exit means the scan itself failed
+ * rather than that it found something. Treating that stdout as a successful
+ * result — the way a non-zero `npm audit` legitimately can be — would let a
+ * failed or partial scan render as "no findings", which is the one thing this
+ * report must never do. `errors` in the payload is treated the same way.
  */
 export function runSast(repoDir: string): ScanReport {
   let stdout: string;
@@ -69,30 +72,42 @@ export function runSast(repoDir: string): ScanReport {
       },
     );
   } catch (error) {
-    const err = error as { code?: string; stdout?: string | Buffer };
-    // semgrep exits non-zero when it finds something; that is a successful run.
-    const captured = err.stdout ? err.stdout.toString() : "";
-    if (captured.trim()) {
-      stdout = captured;
-    } else {
-      return {
-        status: "unavailable",
-        reason:
-          err.code === "ENOENT"
-            ? "semgrep is not installed in this environment, so no static analysis was performed."
-            : `semgrep could not be run: ${(error as Error).message.split("\n")[0]}`,
-        findings: [],
-      };
-    }
+    const err = error as { code?: string; message?: string };
+    return {
+      status: "unavailable",
+      reason:
+        err.code === "ENOENT"
+          ? "semgrep is not installed in this environment, so no static analysis was performed."
+          : `semgrep exited non-zero, which without --error means the scan failed rather than found something: ${(err.message || "").split("\n")[0]}`,
+      findings: [],
+      skipped: [],
+    };
   }
 
+  let parsed: SemgrepOutput;
   try {
-    return { status: "ran", reason: null, findings: parseSemgrep(JSON.parse(stdout)) };
+    parsed = JSON.parse(stdout) as SemgrepOutput;
   } catch {
     return {
       status: "unavailable",
       reason: "semgrep produced output that could not be parsed as JSON.",
       findings: [],
+      skipped: [],
     };
   }
+
+  const findings = parseSemgrep(parsed);
+  const errorCount = Array.isArray(parsed.errors) ? parsed.errors.length : 0;
+  if (errorCount > 0) {
+    // It produced results, but not over the whole tree — say so rather than
+    // presenting a partial scan as a complete one.
+    return {
+      status: "partial",
+      reason: `semgrep reported ${errorCount} error(s) during the scan, so some files may not have been analysed.`,
+      findings,
+      skipped: [],
+    };
+  }
+
+  return { status: "ran", reason: null, findings, skipped: [] };
 }

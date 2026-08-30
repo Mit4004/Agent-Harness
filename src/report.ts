@@ -39,17 +39,44 @@ function renderFindingLine(finding: Finding): string {
 }
 
 function renderScanSection(title: string, report: ScanReport, noneText: string): string[] {
-  if (report.status !== "ran") {
+  const lines: string[] = [];
+
+  if (report.status === "unavailable" || report.status === "skipped") {
     // Never let "could not scan" read as "nothing found".
     return [`### ${title}`, ``, `_Not scanned — ${report.reason ?? "scanner unavailable."}_`];
   }
-  if (report.findings.length === 0) {
-    return [`### ${title}`, ``, `_${noneText}_`];
+
+  const heading = report.findings.length
+    ? `### ${title} (${report.findings.length})`
+    : `### ${title}`;
+  lines.push(heading, ``);
+
+  if (report.status === "partial") {
+    // Stated before the results, not after: a reader who stops at the first
+    // line should still learn that the coverage was incomplete.
+    lines.push(`> ⚠️ **Incomplete scan.** ${report.reason ?? ""}`.trim(), ``);
   }
-  const sorted = [...report.findings].sort(
-    (a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity],
-  );
-  return [`### ${title} (${sorted.length})`, ``, ...sorted.map(renderFindingLine)];
+
+  if (report.findings.length === 0) {
+    lines.push(
+      report.status === "partial"
+        ? `_No findings in the files that were inspected — see the caveat above._`
+        : `_${noneText}_`,
+    );
+  } else {
+    const sorted = [...report.findings].sort(
+      (a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity],
+    );
+    lines.push(...sorted.map(renderFindingLine));
+  }
+
+  if (report.skipped.length > 0) {
+    lines.push(``, `<details><summary>Not inspected (${report.skipped.length})</summary>`, ``);
+    lines.push(...report.skipped.map((s) => `- \`${s.path}\` — ${s.reason}`));
+    lines.push(``, `</details>`);
+  }
+
+  return lines;
 }
 
 /**

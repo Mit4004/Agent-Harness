@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ScanReport, SecurityScan } from "./types.js";
+import type { ScanReport, SecurityScan, SkippedFile } from "./types.js";
 import { isScannablePath, scanContentForSecrets } from "./secrets.js";
 import { runSast } from "./sast.js";
 
@@ -33,19 +33,35 @@ export function runSecretScan(repoDir: string): ScanReport {
       status: "unavailable",
       reason: `Could not list tracked files: ${(error as Error).message.split("\n")[0]}`,
       findings: [],
+      skipped: [],
     };
   }
 
   const findings = [];
+  const skipped: SkippedFile[] = [];
+
   for (const file of files) {
     if (!isScannablePath(file)) continue;
     const full = join(repoDir, file);
     try {
-      if (statSync(full).size > MAX_FILE_BYTES) continue;
+      // lstat, not stat: a tracked symlink must be identified rather than
+      // followed. The target of a symlink in a cloned repo is chosen by
+      // whoever wrote the repo, so following one would let an untrusted
+      // repository point the scanner at arbitrary host files or a blocking
+      // device — reading content that was never part of the checkout.
+      const stats = lstatSync(full);
+      if (stats.isSymbolicLink()) {
+        skipped.push({ path: file, reason: "symlink — not followed" });
+        continue;
+      }
+      if (!stats.isFile()) continue;
+      if (stats.size > MAX_FILE_BYTES) {
+        skipped.push({ path: file, reason: `larger than ${MAX_FILE_BYTES} bytes` });
+        continue;
+      }
       findings.push(...scanContentForSecrets(file, readFileSync(full, "utf-8")));
-    } catch {
-      // Unreadable or binary file — skip it rather than failing the whole scan.
-      continue;
+    } catch (error) {
+      skipped.push({ path: file, reason: `unreadable: ${(error as Error).message.split("\n")[0]}` });
     }
   }
 
@@ -54,7 +70,16 @@ export function runSecretScan(repoDir: string): ScanReport {
     finding.id = `SEC-${String(index + 1).padStart(2, "0")}`;
   });
 
-  return { status: "ran", reason: null, findings };
+  if (skipped.length > 0) {
+    return {
+      status: "partial",
+      reason: `${skipped.length} tracked file(s) could not be inspected, so this is not a complete scan.`,
+      findings,
+      skipped,
+    };
+  }
+
+  return { status: "ran", reason: null, findings, skipped: [] };
 }
 
 export function runSecurityScan(repoDir: string): SecurityScan {

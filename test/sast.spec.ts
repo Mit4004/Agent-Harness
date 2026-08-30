@@ -42,8 +42,8 @@ describe("parseSemgrep", () => {
 
 describe("renderSecuritySection", () => {
   const empty: SecurityScan = {
-    secrets: { status: "ran", reason: null, findings: [] },
-    sast: { status: "ran", reason: null, findings: [] },
+    secrets: { status: "ran", reason: null, findings: [], skipped: [] },
+    sast: { status: "ran", reason: null, findings: [], skipped: [] },
   };
 
   it("states plainly that nothing here was verified", () => {
@@ -61,7 +61,7 @@ describe("renderSecuritySection", () => {
 
     const unavailable = renderSecuritySection({
       ...empty,
-      sast: { status: "unavailable", reason: "semgrep is not installed.", findings: [] },
+      sast: { status: "unavailable", reason: "semgrep is not installed.", findings: [], skipped: [] },
     });
     expect(unavailable).toContain("Not scanned");
     expect(unavailable).toContain("semgrep is not installed.");
@@ -74,6 +74,7 @@ describe("renderSecuritySection", () => {
       sast: {
         status: "ran",
         reason: null,
+        skipped: [],
         findings: [
           { id: "S1", kind: "sast", rule: "low-rule", severity: "Low", file: "a", line: 1, message: "m", excerpt: "" },
           { id: "S2", kind: "sast", rule: "crit-rule", severity: "Critical", file: "b", line: 2, message: "m", excerpt: "" },
@@ -81,5 +82,79 @@ describe("renderSecuritySection", () => {
       },
     });
     expect(body.indexOf("crit-rule")).toBeLessThan(body.indexOf("low-rule"));
+  });
+});
+
+describe("SAST output never republishes a credential", () => {
+  // The finding Qodo caught on PR #9: secret findings were redacted, but SAST
+  // findings copied semgrep's raw matched line and rule message straight
+  // through. A static-analysis rule that fires *on a hardcoded credential*
+  // would therefore print that credential in the very report warning about it.
+  const FAKE_AWS = "AKIAIOSFODNN7EXAMPLE";
+
+  it("scrubs a credential out of the matched source line", () => {
+    const findings = parseSemgrep({
+      results: [
+        {
+          check_id: "hardcoded-credential",
+          path: "src/config.js",
+          start: { line: 3 },
+          extra: { severity: "ERROR", message: "Hardcoded credential", lines: `key = "${FAKE_AWS}"` },
+        },
+      ],
+    });
+    expect(findings[0].excerpt).not.toContain(FAKE_AWS);
+    expect(findings[0].excerpt).toContain("AKIA");
+    expect(findings[0].excerpt).toContain("*");
+  });
+
+  it("scrubs a credential the rule interpolated into its message", () => {
+    const findings = parseSemgrep({
+      results: [{ extra: { message: `Found secret ${FAKE_AWS} in source`, severity: "ERROR" } }],
+    });
+    expect(findings[0].message).not.toContain(FAKE_AWS);
+  });
+
+  it("survives the whole way into rendered markdown", () => {
+    const body = renderSecuritySection({
+      secrets: { status: "ran", reason: null, findings: [], skipped: [] },
+      sast: {
+        status: "ran",
+        reason: null,
+        skipped: [],
+        findings: parseSemgrep({
+          results: [{ extra: { message: "x", severity: "ERROR", lines: `k="${FAKE_AWS}"` } }],
+        }),
+      },
+    });
+    expect(body).not.toContain(FAKE_AWS);
+  });
+});
+
+describe("partial scans never read as clean", () => {
+  const base: SecurityScan = {
+    secrets: { status: "ran", reason: null, findings: [], skipped: [] },
+    sast: { status: "ran", reason: null, findings: [], skipped: [] },
+  };
+
+  it("flags an incomplete scan even when it found nothing", () => {
+    const body = renderSecuritySection({
+      ...base,
+      secrets: {
+        status: "partial",
+        reason: "2 tracked file(s) could not be inspected, so this is not a complete scan.",
+        findings: [],
+        skipped: [
+          { path: "big.bin", reason: "larger than 1000000 bytes" },
+          { path: "link.txt", reason: "symlink — not followed" },
+        ],
+      },
+    });
+    expect(body).toContain("Incomplete scan");
+    expect(body).toContain("could not be inspected");
+    // The unqualified all-clear line must NOT appear for a partial scan.
+    expect(body).not.toContain("No credential patterns matched in tracked files.");
+    expect(body).toContain("Not inspected (2)");
+    expect(body).toContain("symlink — not followed");
   });
 });

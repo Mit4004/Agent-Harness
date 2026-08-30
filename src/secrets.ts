@@ -74,6 +74,28 @@ export function redact(secret: string): string {
 }
 
 /**
+ * Masks every known credential pattern found *inside* a longer piece of text.
+ *
+ * Distinct from `redact`, which masks the middle of a string that is already
+ * known to be a secret. This is for text that merely *might* contain one —
+ * a matched source line from a static-analysis rule, or a rule message that
+ * interpolated the matched value. Passing such a line to `redact` would be
+ * wrong: it would mask the middle of the whole line and could leave the
+ * credential itself fully visible at either end.
+ *
+ * Any field that reaches a PR body, a log, or the model's context must go
+ * through this first.
+ */
+export function scrubSecrets(text: string): string {
+  let scrubbed = text;
+  for (const rule of RULES) {
+    rule.pattern.lastIndex = 0;
+    scrubbed = scrubbed.replace(rule.pattern, (match) => redact(match));
+  }
+  return scrubbed;
+}
+
+/**
  * Paths that are generated noise rather than source, and would drown real
  * findings. Lockfiles are deliberately NOT excluded: npm and yarn lockfiles
  * can embed registry credentials inside `resolved` URLs, which makes them a

@@ -71,8 +71,13 @@ export interface TierRunResult {
 
 export type FindingKind = "sast" | "secret";
 
-/** Whether a scanner actually ran, so "no findings" is never ambiguous. */
-export type ScanStatus = "ran" | "unavailable" | "skipped";
+/**
+ * Whether a scanner actually ran, so "no findings" is never ambiguous.
+ * `partial` exists because a scan that inspected most of the tree is a
+ * different claim from one that inspected all of it, and reporting the two
+ * identically would overstate the coverage behind an empty result.
+ */
+export type ScanStatus = "ran" | "partial" | "unavailable" | "skipped";
 
 export interface Finding {
   id: string;
@@ -92,12 +97,24 @@ export interface Finding {
   excerpt: string;
 }
 
+export interface SkippedFile {
+  path: string;
+  reason: string;
+}
+
 export interface ScanReport {
   /** Why a scanner produced no findings: it ran, or it could not run at all. */
   status: ScanStatus;
   /** Present when status is not "ran" — e.g. the scanner is not installed. */
   reason: string | null;
   findings: Finding[];
+  /**
+   * Files the scanner could not inspect. Recorded rather than silently
+   * dropped: an unreadable or oversized file might have been the one holding
+   * the credential, so "nothing matched" is only honest alongside a list of
+   * what was never looked at.
+   */
+  skipped: SkippedFile[];
 }
 
 export interface SecurityScan {
