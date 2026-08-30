@@ -161,3 +161,35 @@ or `gh pr create` otherwise. Report the PR URL to the user.
 
 **You never merge.** Your job ends when the PR exists — the user reviews
 and merges on GitHub like any other PR.
+
+## Optional — security scan (report-only, never fixed)
+
+Two extra commands surface findings the upgrade loop does not touch:
+
+```
+node /tmp/engine/dist/cli.js scan /tmp/target          # JSON
+node /tmp/engine/dist/cli.js scan-report /tmp/target   # markdown for the PR body
+```
+
+`scan` reports **secrets** (credential patterns in tracked files) and **SAST**
+findings (via `semgrep`, if it is installed in the sandbox).
+
+**These are reported, never remediated, and that distinction is not optional.**
+A dependency bump has an honest oracle — the repo's tests either still pass or
+they don't. A code-level fix has no such proof, and the only real remediation
+for a leaked credential is rotating it at its source, which is the user's call
+and not something to do on their behalf. So never "fix" a finding from this
+command, never present one as verified, and never fold them into the bump
+buckets.
+
+Two things to respect when reporting them:
+
+- **Never echo a raw secret.** The `excerpt` field is already redacted; use it
+  as-is. Reproducing the unmasked value in chat or a PR body republishes the
+  credential to a wider audience than the original commit.
+- **`status: "unavailable"` is not `"no findings"`.** If semgrep is missing,
+  say static analysis did not run. Reporting an unavailable scanner as a clean
+  result claims safety that was never established.
+
+If the user asked only for dependency upgrades, this step is optional — mention
+findings exist and let them decide whether to include the section.

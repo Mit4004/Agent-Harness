@@ -12,7 +12,8 @@ import { runNpm } from "./npm.js";
 import { runBaseline } from "./baseline.js";
 import { verifyBumpWithOpportunisticUpgrade, type DiagnoseFn } from "./verify.js";
 import { combineGreens } from "./combine.js";
-import { renderPrBody } from "./report.js";
+import { renderPrBody, renderSecuritySection } from "./report.js";
+import { runSecurityScan } from "./scan.js";
 import type { Bump, BumpPlan, VerifyTier } from "./types.js";
 
 function readJson<T>(path: string): T {
@@ -140,6 +141,14 @@ function cmdCombine(repoDir: string, planFile: string): void {
   printJson(result);
 }
 
+function cmdScan(repoDir: string): void {
+  printJson(runSecurityScan(repoDir));
+}
+
+function cmdScanReport(repoDir: string): void {
+  process.stdout.write(renderSecuritySection(runSecurityScan(repoDir)) + "\n");
+}
+
 function cmdReport(planFile: string): void {
   const plan = readJson<BumpPlan>(planFile);
   process.stdout.write(renderPrBody(plan) + "\n");
@@ -160,9 +169,15 @@ switch (command) {
   case "report":
     cmdReport(args[0]);
     break;
+  case "scan":
+    cmdScan(args[0]);
+    break;
+  case "scan-report":
+    cmdScanReport(args[0]);
+    break;
   default:
     process.stderr.write(
-      "Usage: cli.js <plan|verify-one|combine|report> ...\n" +
+      "Usage: cli.js <plan|verify-one|combine|report|scan|scan-report> ...\n" +
         "  plan <repoDir>\n" +
         "  verify-one <repoDir> <baseBranch> <bumpFile.json> <baselineFailuresFile.json> <tier>\n" +
         "  combine <repoDir> <planFile.json>\n" +

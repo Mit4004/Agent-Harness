@@ -52,3 +52,72 @@ export interface TierRunResult {
   /** Raw stdout+stderr, kept out of the model's context except on failure. */
   output: string;
 }
+
+// ---------------------------------------------------------------------------
+// Findings: things we detect but deliberately do NOT fix.
+//
+// A Bump is something the agent changed *and proved* against the repo's own
+// tests. A Finding is the opposite: reported, never auto-remediated. They are
+// separate types on purpose, so nothing unverified can ever be presented with
+// the authority of a verified bump.
+//
+// Why report-only: a dependency upgrade has an honest oracle — the test suite
+// either still passes or it doesn't. A code-level SAST fix does not; the tests
+// rarely cover the patched path, so "we fixed it" would be a claim with no
+// evidence behind it. Secrets are stronger still: the only real remediation is
+// rotating the credential at its source, which no agent should do on your
+// behalf. So both are surfaced for a human and left alone.
+// ---------------------------------------------------------------------------
+
+export type FindingKind = "sast" | "secret";
+
+/**
+ * Whether a scanner actually ran, so "no findings" is never ambiguous.
+ * `partial` exists because a scan that inspected most of the tree is a
+ * different claim from one that inspected all of it, and reporting the two
+ * identically would overstate the coverage behind an empty result.
+ */
+export type ScanStatus = "ran" | "partial" | "unavailable" | "skipped";
+
+export interface Finding {
+  id: string;
+  kind: FindingKind;
+  /** Short rule identifier, e.g. "aws-access-key-id" or a semgrep check id. */
+  rule: string;
+  severity: "Critical" | "High" | "Medium" | "Low";
+  file: string;
+  line: number;
+  /** Human-readable description of what was matched and why it matters. */
+  message: string;
+  /**
+   * Redacted evidence. For secrets this is deliberately masked — the raw match
+   * must never reach a PR body, a log, or the model's context, since that would
+   * republish the very credential being reported.
+   */
+  excerpt: string;
+}
+
+export interface SkippedFile {
+  path: string;
+  reason: string;
+}
+
+export interface ScanReport {
+  /** Why a scanner produced no findings: it ran, or it could not run at all. */
+  status: ScanStatus;
+  /** Present when status is not "ran" — e.g. the scanner is not installed. */
+  reason: string | null;
+  findings: Finding[];
+  /**
+   * Files the scanner could not inspect. Recorded rather than silently
+   * dropped: an unreadable or oversized file might have been the one holding
+   * the credential, so "nothing matched" is only honest alongside a list of
+   * what was never looked at.
+   */
+  skipped: SkippedFile[];
+}
+
+export interface SecurityScan {
+  secrets: ScanReport;
+  sast: ScanReport;
+}
